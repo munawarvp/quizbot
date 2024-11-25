@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Quizbot</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        .chat-container {
+            max-width: 400px;
+            margin: 0 auto;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 10px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        .chat-messages {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        .message {
+            display: flex;
+            margin-bottom: 10px;
+        }
+        .user-message {
+            justify-content: flex-end;
+        }
+        .bot-message {
+            justify-content: flex-start;
+        }
+        .message-text {
+            background-color: #f0f0f0;
+            border-radius: 15px;
+            padding: 8px 15px;
+            max-width: 70%;
+        }
+        .user-message .message-text {
+            background-color: #e1e1e1;
+            color: #333;
+        }
+        .input-container {
+            display: flex;
+            margin-top: 10px;
+        }
+        .input-box {
+            flex: 1;
+            border: 1px solid #ccc;
+            border-radius: 20px;
+            padding: 8px 15px;
+            outline: none;
+            background-color: #f0f0f0;
+            color: #333;
+        }
+        .send-button {
+            background-color: #777;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            padding: 8px 15px;
+            margin-left: 10px;
+            cursor: pointer;
+        }
+        .score {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 20px;
+        }
+        .question {
+            margin-bottom: 20px;
+        }
+        .answer {
+            margin-left: 20px;
+        }
+        .correct {
+            color: green;
+        }
+        .incorrect {
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <ul class="chat-messages" id="chat-messages">
+            {% for message in request.session.message_history %}
+                {% if message.is_user %}
+                <li class="message user-message">
+                    <div class="message-text">{{message.text}}</div>
+                </li>
+                {% else %}
+                <li class="message bot-message">
+                    <div class="message-text">
+                        {% if message.text and not message.text.question_text and not message.text.answer_list %}
+                            {{ message.text }}
+                        {% endif %}
+
+                        {% if message.text.question_text %}
+                            <div class="question">Question: {{ message.text.question_text }}</div>
+                            <form>
+                                {% for option in message.text.options %}
+                                    <div>
+                                        <input type="radio" id="option-{{ forloop.counter }}" name="answer" value="{{ option }}">
+                                        <label for="option-{{ forloop.counter }}">{{ option }}</label>
+                                    </div>
+                                {% endfor %}
+                            </form>
+                        {% endif %}
+
+                        {% if message.text.answer_list %}
+                            <div class="score">Your Score is: {{message.text.score}} Out of {{message.text.total_questions}}</div>
+                            {% for item in message.text.answer_list %}
+                                <div class="question">
+                                    <p><strong>Question:</strong> {{ item.question }}</p>
+                                    <div class="answer">
+                                        {% if item.user_answer == item.answer %}
+                                            <label>
+                                                <input type="radio" checked disabled>
+                                                <span class="correct">{{ item.answer }} (Your Answer)</span>
+                                            </label>
+                                        {% else %}
+                                            <div>
+                                                <label>
+                                                    <input type="radio" checked disabled>
+                                                    <span class="correct">{{ item.answer }} (Correct Answer)</span>
+                                                </label>
+                                            </div>
+                                            <div>
+                                                <label>
+                                                    <input type="radio" checked disabled>
+                                                    <span class="incorrect">{{ item.user_answer }} (Your Answer)</span>
+                                                </label>
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                </li>
+                {% endif %}
+            {% endfor %}
+        </ul>
+        <div class="input-container">
+            <input type="text" class="input-box" id="input-box" placeholder="Type your message...">
+            <button class="send-button" id="send-button">Send</button>
+            <button class="send-button" id="reset-button">Reset</button>
+        </div>
+    </div>
+    <script>
+
+        const chatSocket = new WebSocket(
+            'ws://'
+            + window.location.host
+            + '/chat/'
+        );
+
+        chatSocket.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            if (data.text && data.text.question_text) {
+                addQuestion(data.text, data.is_user);
+                } else if (data.text && data.text.answer_list) {
+                    
+                    addAnswer(data.text, data.is_user);
+                } else if (typeof data.text === 'string') {
+                    addMessage(data.text, data.is_user);
+                } else {
+                    console.warn('Unhandled data format:', data);
+            }
+        };
+
+        chatSocket.onclose = function(e) {
+            console.error('Chat socket closed unexpectedly');
+        };
+
+        document.querySelector('#input-box').focus();
+        document.querySelector('#input-box').onkeyup = function(e) {
+            if (e.keyCode === 13) {  // enter, return
+                document.querySelector('#send-button').click();
+            }
+        };
+
+        document.querySelector('#send-button').onclick = function(e) {
+            const inputBox = document.getElementById('input-box');
+            const userMessage = inputBox.value.trim();
+            if (!userMessage) {
+                return
+            }
+            chatSocket.send(JSON.stringify({
+                'message': userMessage
+            }));
+            inputBox.value = '';
+        };
+
+        document.querySelector('#reset-button').onclick = function(e) {
+            const inputBox = document.getElementById('input-box');
+            inputBox.value = '/reset';
+            document.querySelector('#send-button').click();
+            location.reload()
+        };
+
+    // Function to add a new message to the chat container
+    function addMessage(text, isUser = false) {
+        const chatMessages = document.getElementById('chat-messages');
+        const messageClass = isUser ? 'user-message' : 'bot-message';
+        const messageText = `
+            <li class="message ${messageClass}">
+                <div class="message-text">${text}</div>
+            </li>
+        `;
+        chatMessages.insertAdjacentHTML('beforeend', messageText);
+    }
+
+    function addQuestion(questionData, isUser = false) {
+        const chatMessages = document.getElementById('chat-messages');
+        const messageClass = isUser ? 'user-message' : 'bot-message';
+
+        const questionHTML = `
+            <li class="message ${messageClass}">
+                <div class="message-text">
+                    <div class="question">Question: ${questionData.question_text}</div>
+                    <form>
+                        ${questionData.options
+                            .map(
+                                (option, index) => `
+                            <div>
+                                <input type="radio" id="option-${index}" name="answer" value="${option}">
+                                <label for="option-${index}">${option}</label>
+                            </div>
+                        `
+                            )
+                            .join('')}
+                    </form>
+                </div>
+            </li>
+        `;
+        chatMessages.insertAdjacentHTML('beforeend', questionHTML);
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const chatMessages = document.getElementById('chat-messages');
+        const inputBox = document.getElementById('input-box');
+        
+        chatMessages.addEventListener('change', function(event) {
+            if (event.target.type === 'radio') {
+                inputBox.value = event.target.value;
+            }
+        });
+    });
+
+    function addAnswer(answerData, isUser = false) {
+        const chatMessages = document.getElementById('chat-messages');
+        const messageClass = isUser ? 'user-message' : 'bot-message';
+
+        const questionsHTML = answerData.answer_list
+            .map(item => `
+                    <div class="question">
+                        <p><strong>Question:</strong> ${item.question}</p>
+                        <div class="answer">
+                            ${item.user_answer === item.answer
+                                ? `
+                                    <label>
+                                        <input type="radio" checked disabled>
+                                        <span class="correct">${item.answer} (Your Answer)</span>
+                                    </label>
+                                `
+                                : `
+                                    <div>
+                                        <label>
+                                            <input type="radio" checked disabled>
+                                            <span class="correct">${item.answer} (Correct Answer)</span>
+                                        </label>
+                                    </div>
+                                    <div>
+                                        <label>
+                                            <input type="radio" checked disabled>
+                                            <span class="incorrect">${item.user_answer} (Your Answer)</span>
+                                        </label>
+                                    </div>
+                                `}
+                        </div>
+                    </div>
+            `)
+            .join('');
+        
+        const answerHTML = `
+            <li class="message ${messageClass}">
+                <div class="message-text">
+                    <div class="score">Your Score is: ${answerData.score} Out of ${answerData.total_questions}</div>
+                        ${questionsHTML} <!-- Inject the generated HTML here -->
+                    </div>
+                </div>
+            </li>
+        `;
+        chatMessages.insertAdjacentHTML('beforeend', answerHTML);
+    }
+
+
+    // Function to handle user message submission
+    function sendMessage() {
+        const inputBox = document.getElementById('input-box');
+        const userMessage = inputBox.value.trim();
+
+    }
+
+    </script>
+</body>
+</html>
